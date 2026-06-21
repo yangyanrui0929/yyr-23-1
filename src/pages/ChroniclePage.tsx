@@ -26,6 +26,9 @@ export default function ChroniclePage() {
   const currentEra = useSimulationStore((s) => s.currentEra)
   const [filter, setFilter] = useState<EventType | 'all'>('all')
 
+  const clanNameMap = new Map(clans.map((c) => [c.id, c.name]))
+  const getClanName = (id: string) => clanNameMap.get(id) ?? id
+
   const filtered = filter === 'all' ? events : events.filter((e) => e.type === filter)
   const timeline = getEventTimeline(filtered)
   const eras = Object.keys(timeline).map(Number).sort((a, b) => a - b)
@@ -136,7 +139,7 @@ export default function ChroniclePage() {
                                 key={clanId}
                                 className="px-1.5 py-0.5 rounded bg-[#2a2a3e] text-[#8a7a6a] text-xs"
                               >
-                                {clanId}
+                                {getClanName(clanId)}
                               </span>
                             ))}
                           </div>

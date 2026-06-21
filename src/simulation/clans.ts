@@ -97,6 +97,15 @@ export function simulateClanTurn(clan: Clan, terrain: Terrain, allClans: Clan[],
     }
   }
 
+  const migrateChance = getMigrateChance(updatedClan, terrain)
+  if (Math.random() < migrateChance) {
+    const migrateResult = tryMigrate(updatedClan, terrain, allClans)
+    if (migrateResult) {
+      updatedClan = migrateResult.clan
+      events.push(migrateResult.event)
+    }
+  }
+
   if (updatedClan.population > 120 && Math.random() < 0.15) {
     const splitResult = trySplit(updatedClan, terrain, currentEra)
     if (splitResult) {
@@ -142,6 +151,20 @@ export function simulateClanTurn(clan: Clan, terrain: Terrain, allClans: Clan[],
   }
 
   return { clan: updatedClan, events }
+}
+
+function getMigrateChance(clan: Clan, terrain: Terrain): number {
+  let chance = 0
+  if (clan.culture.tendency === 'nomadic') chance += 0.25
+  if (clan.culture.traits.includes('expansive')) chance += 0.08
+  if (clan.culture.traits.includes('isolationist')) chance -= 0.1
+
+  const pressure = determinePressure(clan, terrain)
+  if (pressure === 'scarcity') chance += 0.2
+  if (pressure === 'conflict') chance += 0.12
+  if (pressure === 'abundance') chance -= 0.15
+
+  return Math.max(0, Math.min(0.6, chance))
 }
 
 function determinePressure(clan: Clan, terrain: Terrain): 'scarcity' | 'abundance' | 'conflict' | 'peace' {
@@ -250,6 +273,107 @@ function trySplit(clan: Clan, terrain: Terrain, currentEra: number): {
       description: `${clan.name}分裂出${childName}`,
       location: newPos,
       involvedClans: [clan.id, childId],
+    },
+  }
+}
+
+function scorePosition(terrain: Terrain, x: number, y: number): number {
+  const tile = terrain.tiles[y]?.[x]
+  if (!tile || !isLand(tile) || tile.biome === 'mountains') return -100
+  let score = 0
+  if (tile.resource) score += 3
+  if (tile.biome === 'plains') score += 1.5
+  if (tile.biome === 'forest') score += 0.8
+  if (tile.biome === 'hills') score += 0.5
+  if (tile.biome === 'desert') score -= 1
+  if (tile.biome === 'tundra') score -= 0.5
+  const neighbors = getNeighbors(terrain, x, y)
+  const waterCount = neighbors.filter(n => n.tile.biome === 'ocean').length
+  if (waterCount > 0 && waterCount < 4) score += 1
+  const resourceNeighbors = neighbors.filter(n => n.tile.resource !== null).length
+  score += resourceNeighbors * 0.5
+  return score
+}
+
+function tryMigrate(clan: Clan, terrain: Terrain, allClans: Clan[]): {
+  clan: Clan
+  event: TurnResultEvent
+} | null {
+  if (!clan.settledAt) return null
+  const fromPos = clan.settledAt
+  const isNomadic = clan.culture.tendency === 'nomadic'
+  const searchRadius = isNomadic ? 20 : 10
+  const occupiedSet = new Set<string>()
+  for (const other of allClans) {
+    if (other.id === clan.id || other.extinct) continue
+    for (const t of other.territory) occupiedSet.add(`${t.x},${t.y}`)
+  }
+
+  let bestPos: Point | null = null
+  let bestScore = -Infinity
+  const currentScore = scorePosition(terrain, fromPos.x, fromPos.y) + clan.territory.length * 0.3
+
+  const minX = Math.max(1, fromPos.x - searchRadius)
+  const maxX = Math.min(terrain.width - 2, fromPos.x + searchRadius)
+  const minY = Math.max(1, fromPos.y - searchRadius)
+  const maxY = Math.min(terrain.height - 2, fromPos.y + searchRadius)
+
+  for (let y = minY; y <= maxY; y += 2) {
+    for (let x = minX; x <= maxX; x += 2) {
+      if (occupiedSet.has(`${x},${y}`)) continue
+      const dist = Math.abs(x - fromPos.x) + Math.abs(y - fromPos.y)
+      if (dist < 4) continue
+      const score = scorePosition(terrain, x, y)
+      if (isNomadic) {
+        if (score > currentScore * 0.9 && score > bestScore) {
+          bestScore = score
+          bestPos = { x, y }
+        }
+      } else {
+        if (score > currentScore * 1.2 && score > bestScore) {
+          bestScore = score
+          bestPos = { x, y }
+        }
+      }
+    }
+  }
+
+  if (!bestPos) return null
+
+  const territorySize = clan.territory.length
+  const newTerritory: Point[] = [bestPos]
+  const frontier = [bestPos]
+  const visited = new Set<string>([`${bestPos.x},${bestPos.y}`])
+
+  while (newTerritory.length < territorySize && frontier.length > 0) {
+    const current = frontier.shift()!
+    const neighbors = getNeighbors(terrain, current.x, current.y)
+    for (const n of neighbors) {
+      const key = `${n.x},${n.y}`
+      if (visited.has(key)) continue
+      if (!isLand(n.tile) || n.tile.biome === 'mountains') continue
+      if (occupiedSet.has(key)) continue
+      visited.add(key)
+      newTerritory.push({ x: n.x, y: n.y })
+      frontier.push({ x: n.x, y: n.y })
+      if (newTerritory.length >= territorySize) break
+    }
+  }
+
+  const fromDesc = `(${fromPos.x},${fromPos.y})`
+  const toDesc = `(${bestPos.x},${bestPos.y})`
+
+  return {
+    clan: {
+      ...clan,
+      settledAt: bestPos,
+      territory: newTerritory,
+    },
+    event: {
+      type: 'migration',
+      description: `${clan.name}从${fromDesc}迁徙至${toDesc}`,
+      location: bestPos,
+      involvedClans: [clan.id],
     },
   }
 }

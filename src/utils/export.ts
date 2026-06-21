@@ -1,7 +1,16 @@
 import type { Event, Clan } from '../simulation/types'
 import { EVENT_TYPE_LABELS, CULTURE_TENDENCY_LABELS, CULTURE_TRAIT_LABELS } from '../simulation/types'
 
+function getClanNameMap(clans: Clan[]): Map<string, string> {
+  return new Map(clans.map(c => [c.id, c.name]))
+}
+
+function idToName(map: Map<string, string>, id: string): string {
+  return map.get(id) ?? id
+}
+
 export function exportAsJSON(events: Event[], clans: Clan[], currentEra: number): string {
+  const nameMap = getClanNameMap(clans)
   const data = {
     exportTime: new Date().toISOString(),
     currentEra,
@@ -10,7 +19,7 @@ export function exportAsJSON(events: Event[], clans: Clan[], currentEra: number)
       era: e.era,
       type: EVENT_TYPE_LABELS[e.type],
       description: e.description,
-      clans: e.involvedClans,
+      clans: e.involvedClans.map(id => idToName(nameMap, id)),
     })),
     clans: clans.map(c => ({
       name: c.name,
@@ -20,14 +29,15 @@ export function exportAsJSON(events: Event[], clans: Clan[], currentEra: number)
         tendency: CULTURE_TENDENCY_LABELS[c.culture.tendency],
         traits: c.culture.traits.map(t => CULTURE_TRAIT_LABELS[t]),
       },
-      allies: c.allies,
-      enemies: c.enemies,
+      allies: c.allies.map(id => idToName(nameMap, id)),
+      enemies: c.enemies.map(id => idToName(nameMap, id)),
     })),
   }
   return JSON.stringify(data, null, 2)
 }
 
 export function exportAsMarkdown(events: Event[], clans: Clan[], currentEra: number): string {
+  const nameMap = getClanNameMap(clans)
   const lines: string[] = []
   lines.push('# 沙盘文明纪年表')
   lines.push('')
@@ -37,13 +47,15 @@ export function exportAsMarkdown(events: Event[], clans: Clan[], currentEra: num
 
   lines.push('## 族群概览')
   lines.push('')
-  lines.push('| 族群 | 状态 | 人口 | 文化倾向 | 特质 |')
-  lines.push('|------|------|------|----------|------|')
+  lines.push('| 族群 | 状态 | 人口 | 文化倾向 | 特质 | 同盟 | 宿敌 |')
+  lines.push('|------|------|------|----------|------|------|------|')
   for (const c of clans) {
     const status = c.extinct ? `灭亡(第${c.extinctEra}纪)` : '存续'
     const tendency = CULTURE_TENDENCY_LABELS[c.culture.tendency]
     const traits = c.culture.traits.map(t => CULTURE_TRAIT_LABELS[t]).join('·')
-    lines.push(`| ${c.name} | ${status} | ${c.population} | ${tendency} | ${traits} |`)
+    const allies = c.allies.map(id => idToName(nameMap, id)).join('、') || '无'
+    const enemies = c.enemies.map(id => idToName(nameMap, id)).join('、') || '无'
+    lines.push(`| ${c.name} | ${status} | ${c.population} | ${tendency} | ${traits} | ${allies} | ${enemies} |`)
   }
   lines.push('')
 
@@ -56,7 +68,8 @@ export function exportAsMarkdown(events: Event[], clans: Clan[], currentEra: num
       lines.push('')
       lastEra = e.era
     }
-    lines.push(`- **${EVENT_TYPE_LABELS[e.type]}**：${e.description}`)
+    const clanNames = e.involvedClans.map(id => idToName(nameMap, id)).join('、')
+    lines.push(`- **${EVENT_TYPE_LABELS[e.type]}**：${e.description}（涉及：${clanNames || '无'}）`)
   }
   lines.push('')
 
